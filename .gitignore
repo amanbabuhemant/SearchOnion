@@ -1,0 +1,5 @@
+# cache dir
+__pycache__/
+
+# Databese files
+*.db
