@@ -3,9 +3,13 @@ from datetime import datetime
 from peewee import *
 
 from utils import *
+from config import *
 
 
-db = SqliteDatabase("OnionSearch.db")
+db = SqliteDatabase("database/SearchOnion.db")
+crawl_history_db = SqliteDatabase("database/CrawlHistory.db")
+tg_db = SqliteDatabase("database/TG.db")
+
 
 
 class BaseModel(db.Model):
@@ -26,7 +30,8 @@ class CrawlQueue(BaseModel):
     @classmethod
     def add(cls, url: str, force: bool = False) -> bool:
         """
-        Adds a URL to the queue if the domain has not reached the crawl limit,  
+        Adds a URL to the queue if the domain has not reached the crawl limit,
+        and not in recent crawl history,
         unless the 'force' flag is set to True.
         
         return True if URL added in queue, else False
@@ -34,21 +39,41 @@ class CrawlQueue(BaseModel):
 
         url_hash = hash_sha256(url)
 
-        if not force:
-            if cls.get_or_none(cls.url_hash==url_hash):
-                return False
+        if cls.get_or_none(cls.url_hash==url_hash):
+            return True
+
+        if force:
+            cls.create(
+                url = url,
+                url_hash = url_hash,
+            )
+            return True
+
+        domain = get_domain(url)
+        domain_status = DomainCrawlStatus.get_or_none(DomainCrawlStatus.domain_hash==domain_hash)
+        if domain_status.crawl_count >= DOMAIN_MAX_CRAWL_LIMIT:
+            return False
+        if CrawlHistory.find(url):
+            return False
+
+        cls.create(
+            url = url,
+            url_hash = url_hash,
+        )
+        return True
 
     @classmethod
-    def get(cls) -> str:
+    def peak(cls) -> str:
         """
-        Return a URL to crawl from queue
+        Return a top URL to crawl from queue
         """
 
-        if not self.size:
+        if not self.size():
             return ""
 
-        url = cls.select().limit(1)[0]
-        return url.url
+        url = cls.select().first()
+        if url:
+            return url.url
 
     @classmethod
     def remove(cls, url: str):
@@ -59,7 +84,7 @@ class CrawlQueue(BaseModel):
         if url:
             url.delete_instance()
     
-    @property
+    @classmethod
     def size(cls) -> int:
         """
         Return Queue size
@@ -78,6 +103,7 @@ class DomainCrawlStatus(BaseModel):
     domain_hash = FixedCharField(64, index=True)
     crawl_count = IntegerField(default=0)
     last_crawl = DateTimeField(default=datetime.utcnow)
+    robots_txt = TextField(default="")
 
     @classmethod
     def update_domain_status(cls, domain: str, crawl: int = 1):
@@ -119,8 +145,104 @@ class OnionDomain(BaseModel):
             domain.save()
 
 
+class CrawlHistory(crawl_history_db.Model):
+    class Meta:
+        databese = crawl_history_db
+
+    id = AutoField()
+    url = TextField()
+    url_hash = FixedCharField(64, index=True)
+    crawl_time = DateTimeField(default=datetime.utcnow)
+    status_code = IntegerField()
+    crawl_status = CharField()
+    size_sum = IntegerField()
+
+    @classmethod
+    def add(cls, url: str, status_code: int, crawl_status: str, response_size: int):
+        """ Add URL to Crawl History """
+
+        url_hash = hash_sha256(url)
+
+        latest = cls.select().order_by(
+            cls.id.desc()
+        ).first()
+
+        size_sum = response_size
+        if latest:
+            size_sum = latest.size_sum + response_size
+        
+        cls.create(
+            url = url,
+            url_hash = url_hash,
+            status_code = status_code,
+            crawl_status = crawl_status,
+            size_sum = size_sum,
+        )
+
+        cls.purge()
+
+    @classmethod
+    def find(cls, url: str):
+        """Find URL in Crawl History
+
+        Return if found
+        """
+        return cls.select().order_by(
+            cls.id.desc()
+        ).first()
+
+    @classmethod
+    def purge(cls):
+        """ Maintain the history size """
+        # presisting the database from getting empty
+        if cls.size() <= 1:
+            return
+        to_be_delete = cls.select().limit(cls.size() - CRAWLED_URL_HISTORY_SIZE)
+        for history in to_be_delete:
+            to_be_delete.delete_instance()
+
+    @classmethod
+    def size(cls) -> int:
+        """ Return History Size """
+        return cls.select().count()
+
+
+class DailyReportSubscribers(tg_db.Model):
+    class Meta:
+        database = tg_db
+
+    id = AutoField()
+    tg_id = IntegerField(unique=True)
+    first_name = CharField()
+
+    @classmethod
+    def subscribe(cls, tg_id: int, name: str = ""):
+        """ Subscribe the User to daily reports """
+        try:
+            cls.create(
+                tg_id = tg_id,
+                name = name
+            )
+        except:
+            pass
+    
+    @classmethod
+    def unsubscribe(cls, tg_id: int):
+        """ Unsubscribe the User from daily Report """
+        subscription = cls.get_or_none(cls.tg_id == tg_id)
+        if subscription:
+            subscription.delete_instance()
+
+
 db.create_tables([
     CrawlQueue,
     DomainCrawlStatus,
     OnionDomain,
-])    
+])
+
+crawl_history_db.create_tables([CrawlHistory])
+
+tg_db.create_tables([
+    DailyReportSubscribers,
+])
+

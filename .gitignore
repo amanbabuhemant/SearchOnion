@@ -3,3 +3,20 @@ __pycache__/
 
 # Databese files
 *.db
+
+# temp filse, dir
+tmp-*
+temp-*
+tmp/
+temp/
+
+# vertual envirnoment
+env/
+venv/
+.env/
+.venv/
+
+# configration files
+prod_config.py
+dev_config.py
+test_config.py
