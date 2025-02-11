@@ -9,15 +9,28 @@ def get_domain(url: str) -> str:
     """
     Extracts and returns the domain from a given URL
     """
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "http://" + url
     parsed_url = urlparse(url)
     return parsed_url.netloc
 
-def fetch_html(url: str) -> (str, int):
+def fetch_url(url: str) -> (str, int):
     """
     Extract and returns HTML of web page and status code
     """
-    r = get(url)
-    return r.text, r.status_code
+    if not url.startswith("http://") or not url.startswith("https://"):
+        url = "https://" + remove_protocol(url)
+    try:
+        r = get(url)
+        return r.text, r.status_code
+    except:
+        try:
+            url = "http://" + remove_protocol(url)
+            r = get(url)
+            return r.text, r.status_code
+        except:
+            """ cannot fetch the url """
+    return "", 0
 
 def extract_links(html: str) -> list[str]:
     """

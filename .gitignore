@@ -16,6 +16,10 @@ venv/
 .env/
 .venv/
 
+# logs
+logs/
+*.log
+
 # configration files
 prod_config.py
 dev_config.py

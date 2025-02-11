@@ -35,23 +35,32 @@ class CrawlQueue(BaseModel):
         unless the 'force' flag is set to True.
         
         return True if URL added in queue, else False
+        alse return True if URL already in the Queue
         """
 
+        url = remove_protocol(url).strip()
+        domain = get_domain(url)
+        if domain == url:
+            url += "/"
         url_hash = hash_sha256(url)
 
         if cls.get_or_none(cls.url_hash==url_hash):
             return True
 
         if force:
-            cls.create(
-                url = url,
-                url_hash = url_hash,
-            )
-            return True
+            try:
+                cls.create(
+                    url = url,
+                    url_hash = url_hash,
+                )
+                return True
+            except:
+                return False
 
         domain = get_domain(url)
+        domain_hash = hash_sha256(domain)
         domain_status = DomainCrawlStatus.get_or_none(DomainCrawlStatus.domain_hash==domain_hash)
-        if domain_status.crawl_count >= DOMAIN_MAX_CRAWL_LIMIT:
+        if domain_status and domain_status.crawl_count >= DOMAIN_MAX_CRAWL_LIMIT:
             return False
         if CrawlHistory.find(url):
             return False
@@ -68,7 +77,7 @@ class CrawlQueue(BaseModel):
         Return a top URL to crawl from queue
         """
 
-        if not self.size():
+        if not cls.size():
             return ""
 
         url = cls.select().first()
@@ -116,12 +125,36 @@ class DomainCrawlStatus(BaseModel):
         if not status:
             status = cls.create(
                 damain = domain,
-                domain_hash = domain_hash,
+                domain_hash = domain_hash
             )
 
         status.crawl_count += crawl
         status.last_crawl = datetime.utcnow()
         status.save()
+
+    @classmethod
+    def get_status(cls, domain: str):
+        domain_hash = hash_sha256(domain)
+        status = cls.get_or_none(cls.domain_hash==domain_hash)
+        return status
+
+    def robots_txt_list(self) -> list[tuple[str, str]]:
+        rules = []
+        # don't know but sometime it's tuple
+        if type(self.robots_txt) == tuple:
+            self.robots_txt = ""
+            self.save()
+        for line in self.robots_txt.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(":")
+            if len(parts) < 2:
+                continue
+            rule = (parts[0].strip(), parts[1].strip())
+            rules.append(rule)
+        return rules
+
 
 
 class OnionDomain(BaseModel):
@@ -130,12 +163,12 @@ class OnionDomain(BaseModel):
     id = AutoField()
     domain = TextField()
     domain_hash = FixedCharField(64, index=True)
-    first_found = DateTimeField(datetime.utcnow)
+    first_found = DateTimeField(default=datetime.utcnow)
     working = BooleanField(null=True, default=None)
     last_check = DateTimeField(null=True, default=None)
 
     @classmethod
-    def update_domain_status(cls, domain: str, worknig: bool = None):
+    def update_domain_status(cls, domain: str, working: bool = None):
         """
         Updates domain status
         """
@@ -143,6 +176,14 @@ class OnionDomain(BaseModel):
             domain.working = working
             domain.last_ceck = datetime.utcnow()
             domain.save()
+
+    @classmethod
+    def find(cls, domain: str):
+        """
+        Find and return domain status
+        """
+        domain_hash = hash_sha256(domain)
+        return cls.get_or_none(cls.domain_hash==domain_hash)
 
 
 class CrawlHistory(crawl_history_db.Model):
@@ -176,7 +217,7 @@ class CrawlHistory(crawl_history_db.Model):
             url_hash = url_hash,
             status_code = status_code,
             crawl_status = crawl_status,
-            size_sum = size_sum,
+            size_sum = size_sum
         )
 
         cls.purge()
@@ -187,7 +228,10 @@ class CrawlHistory(crawl_history_db.Model):
 
         Return if found
         """
-        return cls.select().order_by(
+        url_hash = hash_sha256(url)
+        return cls.select().where(
+            cls.url_hash==url_hash
+        ).order_by(
             cls.id.desc()
         ).first()
 
@@ -195,11 +239,11 @@ class CrawlHistory(crawl_history_db.Model):
     def purge(cls):
         """ Maintain the history size """
         # presisting the database from getting empty
-        if cls.size() <= 1:
+        if cls.size() <= 1 or cls.size() < CRAWLED_URL_HISTORY_SIZE:
             return
         to_be_delete = cls.select().limit(cls.size() - CRAWLED_URL_HISTORY_SIZE)
         for history in to_be_delete:
-            to_be_delete.delete_instance()
+            history.delete_instance()
 
     @classmethod
     def size(cls) -> int:
