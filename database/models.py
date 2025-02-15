@@ -60,7 +60,7 @@ class CrawlQueue(BaseModel):
         domain = get_domain(url)
         domain_hash = hash_sha256(domain)
         domain_status = DomainCrawlStatus.get_or_none(DomainCrawlStatus.domain_hash==domain_hash)
-        if domain_status and domain_status.crawl_count >= DOMAIN_MAX_CRAWL_LIMIT:
+        if domain_status and domain_status.crawl_count + cls.urls_for_domain(domain).count() >= DOMAIN_MAX_CRAWL_LIMIT:
             return False
         if CrawlHistory.find(url):
             return False
@@ -70,6 +70,31 @@ class CrawlQueue(BaseModel):
             url_hash = url_hash,
         )
         return True
+
+    @classmethod
+    def add_multiple(cls, urls: list[url]):
+        """ Effective for adding multiple url in Queue """
+
+        urls = map(remove_protocol, urls)
+
+        domain_urls = {}
+        for url in urls:
+            domain = get_domain(url)
+            if domain not in domain_urls.keys():
+                domain_urls[domain] = []
+            domain_urls[domain].append(url)
+
+        for domain, urls in domain_urls.items():
+            domain_status = DomainCrawlStatus.get_status(domain)
+            limit = DOMAIN_MAX_CRAWL_LIMIT 
+            if domain_status:
+                limit -= domain_status.crawl_count 
+            limit -= cls.urls_for_domain(domain).count()
+            if limit <= 0:
+                continue
+            for url in urls[:limit]:
+                cls.add(url, force=True)
+
 
     @classmethod
     def peak(cls) -> str:
@@ -99,6 +124,15 @@ class CrawlQueue(BaseModel):
         Return Queue size
         """
         return cls.select().count()
+
+    @classmethod
+    def urls_for_domain(cls, domain):
+        """
+        Return peewee query for URLs in queue for the domais
+        """
+        return cls.select().where(
+            cls.url.startswith(domain + "/")
+        )
 
 
 class DomainCrawlStatus(BaseModel):

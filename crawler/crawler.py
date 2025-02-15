@@ -104,6 +104,7 @@ class Crawler:
             "Crawled", len(content)
         )
 
+        DomainCrawlStatus.update_domain_status(domain)
         logger.info(f"Crawling completed for {url}, {valid_links} links found")
 
     def is_allowed_to_crawl(self, url) -> bool:
@@ -191,7 +192,7 @@ class Crawler:
                 print("Try again if programm crawler didn't stop")
                 sleep(5)
             except Exception as e:
-                logger.worn(str(e))
+                logger.warn(str(e))
                 sleep(10)
         logger.info("Crawler stopped")
 
